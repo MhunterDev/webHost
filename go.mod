@@ -1,4 +1,4 @@
-module webHost
+module github.com/mhunterdev/webHost
 
 go 1.24.2
 

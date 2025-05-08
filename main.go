@@ -6,6 +6,9 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
+	"github.com/mhunterdev/webHost/src/certs"
+	"github.com/mhunterdev/webHost/src/docker"
+	"github.com/mhunterdev/webHost/src/requirements"
 )
 
 // Checks for the .env file
@@ -28,7 +31,7 @@ func SetEnv() {
 		return
 	}
 
-	OS, _ := GetPackageManager()
+	OS, _ := requirements.GetPackageManager()
 
 	// Start the prompt for environment variables
 	fmt.Println("Gathering user environment inputs...")
@@ -79,16 +82,15 @@ func SetEnv() {
 
 // BuildRequirements combines minor functions into a single action to build the requirements
 func BuildRequirements() {
-	CreateDirs()
-	SetEnv()
-	InstallOpenSSL()
-	InstallDocker()
-	StartDocker()
-	InstallDockerCompose()
-	ConfigureDocker()
-	ConfigureDockerEnv()
-	BuildCACerts()
-	StartDB()
+	requirements.CreateDirs()
+	requirements.InstallOpenSSL()
+	requirements.InstallDocker()
+	docker.StartDocker()
+	requirements.InstallDockerCompose()
+	docker.ConfigureDocker()
+	docker.ConfigureDockerEnv()
+	certs.BuildCACerts()
+	docker.StartDB()
 }
 
 func main() {
