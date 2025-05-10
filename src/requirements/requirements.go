@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -13,21 +14,42 @@ func CreateDirs() {
 	// Create directories for certificates
 	fmt.Println("Creating required directories...")
 
-	err := os.MkdirAll(".certs/private", 0755)
+	err := os.Mkdir(".certs/private", 0755)
 	if err != nil {
 		fmt.Println("Error creating base directories")
 		return
 	}
-	err2 := os.MkdirAll(".certs/.postgres/certs/private", 0755)
+	err2 := os.Mkdir(".certs/.postgres/certs/private", 0755)
 	if err2 != nil {
 		fmt.Println("Error creating base directories")
 		return
 	}
-	err3 := os.MkdirAll(".docker/compose/", 0755)
+	err3 := os.Mkdir(".docker/compose/", 0755)
 	if err3 != nil {
 		fmt.Println("Error creating base directories")
 		return
 	}
+	err4 := os.Mkdir(".docker/compose/mounts", 0755)
+	if err4 != nil {
+		fmt.Println("Error creating base directories")
+		return
+	}
+	os.Create(".docker/compose/mounts/pg_hba.conf")
+	os.Create(".docker/compose/docker-compose.yml")
+	os.Chown(".docker/compose/mounts/pg_hba.conf", 1000, 1000)
+
+	filepath.WalkDir(".docker", func(filePath string, d os.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("error accessing path %s: %v", filePath, err)
+		}
+
+		// Change ownership of the file or directory
+		if err := os.Chown(filePath, 1000, 1000); err != nil {
+			return fmt.Errorf("error changing ownership of %s: %v", filePath, err)
+		}
+
+		return nil
+	})
 }
 
 // Determine what package manager to use
@@ -80,7 +102,7 @@ func InstallDocker() {
 	case "apt":
 		cmd = exec.Command("sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "docker")
 	case "yum":
-		cmd = exec.Command("sudo", "yum", "install", "-y", "docker")
+		cmd = exec.Command("sudo", "yum", "install", "docker", "-y")
 	case "pacman":
 		cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "docker")
 	default:

@@ -6,9 +6,12 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 	"github.com/mhunterdev/webHost/src/certs"
 	"github.com/mhunterdev/webHost/src/docker"
+	"github.com/mhunterdev/webHost/src/pgconnect"
 	"github.com/mhunterdev/webHost/src/requirements"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 // Checks for the .env file
@@ -47,6 +50,18 @@ func SetEnv() {
 		return ""
 	}
 
+	// Helper function to read secure input (hidden password)
+	readSecureInput := func(prompt string) string {
+		fmt.Println(prompt)
+		bytePassword, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			fmt.Println("Error reading password:", err)
+			return ""
+		}
+		fmt.Println() // Print a newline after password input
+		return string(bytePassword)
+	}
+
 	// Collect inputs
 	envVars := map[string]string{
 		"PACKAGE_MANAGER": OS,
@@ -61,6 +76,7 @@ func SetEnv() {
 		"DNS":             readInput("DNS Alternative Names for the certificate (comma separated):"),
 		"DOCKER_IP":       readInput("Enter IP address for local docker container"),
 		"POST_USER":       readInput("Enter a username for the postgresql install"),
+		"POST_PASSWORD":   readSecureInput("Enter a password for the postgresql install:"),
 		"PG_PORT":         readInput("Enter the port postgrsql should listen on"),
 		"DBNAME":          readInput("Enter a name for the new database"),
 		"SUBNET":          readInput("Enter the subnet for the docker network (e.g.,192.168.100/24)"),
@@ -80,15 +96,18 @@ func SetEnv() {
 	fmt.Println("Environment variables successfully written to .env file.")
 }
 
+//
+
 // BuildRequirements combines minor functions into a single action to build the requirements
 func BuildRequirements() {
+	SetEnv()
 	requirements.CreateDirs()
 	requirements.InstallOpenSSL()
 	requirements.InstallDocker()
-	docker.StartDocker()
-	requirements.InstallDockerCompose()
 	docker.ConfigureDocker()
 	docker.ConfigureDockerEnv()
+	docker.StartDocker()
+	requirements.InstallDockerCompose()
 	certs.BuildCACerts()
 	docker.StartDB()
 }
@@ -97,7 +116,14 @@ func main() {
 	// Check if the .env file exists
 	if !CheckEnvFile() {
 		BuildRequirements()
-	} else {
+	}
+
+	//Start the PG API listener
+	err := pgconnect.TestConnection()
+	if err != nil {
+		fmt.Println("Error connecting to PostgreSQL:", err)
 		return
 	}
+	fmt.Println("PostgreSQL connection successful. Starting API listener...")
+
 }
