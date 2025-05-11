@@ -5,54 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
-// Creates directories for the web certificates, docker-compose, and the database
-func CreateDirs() {
-	// Create directories for certificates
-	fmt.Println("Creating required directories...")
-
-	err := os.Mkdir(".certs/private", 0755)
-	if err != nil {
-		fmt.Println("Error creating base directories")
-		return
-	}
-	err2 := os.Mkdir(".certs/.postgres/certs/private", 0755)
-	if err2 != nil {
-		fmt.Println("Error creating base directories")
-		return
-	}
-	err3 := os.Mkdir(".docker/compose/", 0755)
-	if err3 != nil {
-		fmt.Println("Error creating base directories")
-		return
-	}
-	err4 := os.Mkdir(".docker/compose/mounts", 0755)
-	if err4 != nil {
-		fmt.Println("Error creating base directories")
-		return
-	}
-	os.Create(".docker/compose/mounts/pg_hba.conf")
-	os.Create(".docker/compose/docker-compose.yml")
-	os.Chown(".docker/compose/mounts/pg_hba.conf", 1000, 1000)
-
-	filepath.WalkDir(".docker", func(filePath string, d os.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("error accessing path %s: %v", filePath, err)
-		}
-
-		// Change ownership of the file or directory
-		if err := os.Chown(filePath, 1000, 1000); err != nil {
-			return fmt.Errorf("error changing ownership of %s: %v", filePath, err)
-		}
-
-		return nil
-	})
-}
-
-// Determine what package manager to use
+// Determines what package manager to use
 func GetPackageManager() (string, error) {
 
 	file, err := os.Open("/etc/os-release")
@@ -73,7 +31,7 @@ func GetPackageManager() (string, error) {
 				return "apt", nil
 			case "centos", "rhel", "fedora", "rocky", "almalinux":
 				fmt.Println("RHEL based OS detected")
-				return "yum", nil
+				return "dnf", nil
 			case "arch":
 				fmt.Println("Arch based OS detected")
 				return "pacman", nil
@@ -92,17 +50,23 @@ func GetPackageManager() (string, error) {
 
 // Installs the docker requirement
 func InstallDocker() {
+	// Load the environment variables
+	godotenv.Load(".env")
 	fmt.Println("Installing docker requirement...")
 
-	os, _ := GetPackageManager()
+	os := os.Getenv("OS")
+	if os == "" {
+		fmt.Println("Error: OS environment variable is not set.")
+		return
+	}
 
 	//Switch to determine how we are installing postgres
 	var cmd *exec.Cmd
 	switch os {
 	case "apt":
 		cmd = exec.Command("sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "docker")
-	case "yum":
-		cmd = exec.Command("sudo", "yum", "install", "docker", "-y")
+	case "dnf":
+		cmd = exec.Command("sudo", "dnf", "install", "docker", "-y")
 	case "pacman":
 		cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "docker")
 	default:
@@ -114,23 +78,24 @@ func InstallDocker() {
 
 // Installs the openssl requirement
 func InstallOpenSSL() {
+
+	godotenv.Load(".env")
 	fmt.Println("Installing openssl requirement...")
-	mgr, err := GetPackageManager()
-	if err != nil {
-		fmt.Println("Error determining OS")
+
+	os := os.Getenv("OS")
+	if os == "" {
+		fmt.Println("Error: OS environment variable is not set.")
+		return
 	}
 
-	// Start the database install
-	fmt.Println("Installing openssl requirement")
-
-	// Placeholder variable for the cmg
+	// Placeholder variable for the cmd
 	var cmd *exec.Cmd
 
-	switch mgr {
+	switch os {
 	case "apt":
 		cmd = exec.Command("sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "openssl")
 	case "yum":
-		cmd = exec.Command("sudo", "yum", "install", "-y", "openssl")
+		cmd = exec.Command("sudo", "dnf", "install", "-y", "openssl")
 	case "pacman":
 		cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "openssl")
 	default:
@@ -138,31 +103,44 @@ func InstallOpenSSL() {
 		return
 	}
 
-	err = cmd.Run()
-	if err != nil {
+	cmd.Run()
+	if err := cmd.Run(); err != nil {
 		fmt.Println("Error installing openssl...")
+		return
 	}
-
+	fmt.Println("OpenSSL installed successfully.")
 }
 
 // Installs the docker requirement
 func InstallDockerCompose() {
 	fmt.Println("Installing docker-compose requirement...")
 
-	os, _ := GetPackageManager()
+	godotenv.Load(".env")
+
+	//Load the environment variables
+	os := os.Getenv("OS")
+	if os == "" {
+		fmt.Println("Error: OS environment variable is not set.")
+		return
+	}
 
 	//Switch to determine how we are installing postgres
 	var cmd *exec.Cmd
 	switch os {
 	case "apt":
 		cmd = exec.Command("sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "docker-compose")
-	case "yum":
-		cmd = exec.Command("sudo", "yum", "install", "-y", "docker-compose")
+	case "dnf":
+		cmd = exec.Command("sudo", "dnf", "install", "-y", "docker-compose")
 	case "pacman":
 		cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "docker-compose")
 	default:
 		fmt.Println("Unsupported package manager")
 		return
 	}
-	cmd.Run()
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println("Error installing docker-compose...")
+		return
+	}
+	fmt.Println("Docker-compose installed successfully.")
 }

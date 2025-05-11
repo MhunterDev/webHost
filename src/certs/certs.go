@@ -1,6 +1,7 @@
 package certs
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +18,38 @@ func formatAltNames(dns string) string {
 		formatted += fmt.Sprintf("DNS.%d = %s\n", i+1, strings.TrimSpace(name))
 	}
 	return formatted
+}
+
+func PromptForCerts() {
+
+	readInput := func(prompt string) string {
+		fmt.Println(prompt)
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			return scanner.Text()
+		}
+		fmt.Println("Error reading input:", scanner.Err())
+		return ""
+	}
+
+	fmt.Println("Generating SSL certificates...")
+	fmt.Println("Please enter the following details:")
+	envVars := map[string]string{
+		"CN":       readInput("Enter the Common Name (CN) for the certificate:"),
+		"O":        readInput("Enter the Organization (O) for the certificate:"),
+		"OU":       readInput("Enter the Organizational Unit (OU) for the certificate:"),
+		"C":        readInput("Enter the Country (C) for the certificate:"),
+		"ST":       readInput("Enter the State/Province (ST) for the certificate:"),
+		"L":        readInput("Enter the Locality (L) for the certificate:"),
+		"EMAIL":    readInput("Enter the Email for the certificate:"),
+		"KEY_SIZE": readInput("Enter the Key Size for the certificate (2048, 4096):"),
+		"DNS":      readInput("DNS Alternative Names for the certificate (comma separated):"),
+	}
+	err := godotenv.Write(envVars, ".env")
+	if err != nil {
+		fmt.Println("Error writing to .env file:", err)
+		return
+	}
 }
 
 // Builds your web servers CA certificate
