@@ -28,13 +28,13 @@ func pullConnString() string {
 	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
 }
 
+// Basic connection test
 func TestConnection() error {
 	connStr := pullConnString()
 	if connStr == "" {
 		return fmt.Errorf("failed to get connection string")
 	}
 
-	fmt.Println("Connection string: ", connStr)
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return fmt.Errorf("failed to open connection: %v", err)
