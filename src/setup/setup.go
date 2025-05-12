@@ -1,4 +1,4 @@
-package Setup
+package setup
 
 import (
 	"bufio"
