@@ -94,6 +94,11 @@ func SetEnv() {
 		fmt.Println("Error writing to .env file:", err)
 		return
 	}
+	err2 := godotenv.Write(envVars, "docker/.env")
+	if err2 != nil {
+		fmt.Println("Error writing to .env file:", err)
+		return
+	}
 
 	fmt.Println("Environment variables successfully written to .env file.")
 }
@@ -189,7 +194,7 @@ func enableAndStartDocker() error {
 
 // verifyDockerComposeInstallation checks if Docker Compose is installed
 func verifyDockerComposeInstallation() error {
-	cmd := exec.Command("docker-compose", "--version")
+	cmd := exec.Command("sudo", "docker-compose", "--version")
 	err := cmd.Run()
 	if err != nil {
 		LogError("Docker Compose is not installed.", err)
@@ -225,8 +230,10 @@ func UpdatePgHbaConf(containerName string) error {
 }
 
 // reloadPostgresConfiguration reloads the PostgreSQL configuration
-func reloadPostgresConfiguration(containerName string) error {
-	reloadCmd := exec.Command("sudo", "docker", "exec", containerName, "pg_ctl", "reload")
+func ReloadPostgresConfiguration(containerName, pguser, dbname string) error {
+	buildcmd := fmt.Sprintf(`"psql -U %s -d %s -c 'SELECT pg_reload_conf()'"`, pguser, dbname)
+	// Corrected the command to use "pg_ctl reload" with the correct path
+	reloadCmd := exec.Command("sudo", "docker", "exec", containerName, "bash", "-c", buildcmd)
 	err := reloadCmd.Run()
 	if err != nil {
 		LogError("Error reloading PostgreSQL configuration.", err)
@@ -360,6 +367,14 @@ func BuildContainers() {
 		return
 	}
 
+	dbname := os.Getenv("DBNAME")
+	pguser := os.Getenv("POST_USER")
+	if dbname == "" || pguser == "" {
+		fmt.Println("Error: DBNAME or POST_USER environment variable is not set.")
+		LogError("DBNAME or POST_USER environment variable is not set.", nil)
+		return
+	}
+
 	time.Sleep(3 * time.Second) // Wait for the container to start, may need to be adjusted
 
 	// Check if the container is running
@@ -383,16 +398,6 @@ func BuildContainers() {
 	} else {
 		fmt.Println("Error checking PostgreSQL container status.")
 		LogError("Error checking PostgreSQL container status.", err)
-		return
-	}
-	containerName := "pgsql_db"
-	LogInfo("Updating pg_hba.conf inside the container...")
-	if err2 := UpdatePgHbaConf(containerName); err2 != nil {
-		return
-	}
-
-	LogInfo("Reloading PostgreSQL configuration...")
-	if err := reloadPostgresConfiguration(containerName); err != nil {
 		return
 	}
 
