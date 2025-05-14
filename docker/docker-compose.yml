@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: pgsql_db
+    environment:
+      POSTGRES_USER: ${POST_USER}
+      POSTGRES_PASSWORD: ${POST_PASSWORD}
+      POSTGRES_DB: ${DBNAME}
+      PGDATA: /var/lib/postgresql/data
+    ports:
+      - "${DOCKER_IP}:${PG_PORT}:5432"
+    networks:
+      - db_network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "config_file=/var/lib/postgresql/data/postgresql.conf"
+networks:
+  db_network:
+    name: db_network
+    internal: true
+    attachable: true
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24 # Updated to a valid private IP range
+    driver: bridge
+
+volumes:
+  postgres_data:

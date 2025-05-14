@@ -6,11 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
-	"github.com/mhunterdev/webHost/src/pgconnect"
-
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -35,7 +34,7 @@ func SetEnv() {
 		return
 	}
 
-	OS, _ := GetPackageManager()
+	OS, _ := getPackageManager()
 	rootDir, _ := exec.Command("pwd").Output()
 	// Start the prompt for environment variables
 	fmt.Println("Gathering user environment inputs...")
@@ -81,12 +80,11 @@ func SetEnv() {
 	envVars := map[string]string{
 		"OS":            OS,
 		"ROOT_DIR":      string(rootDir),
-		"DOCKER_IP":     readInput("Enter IP address for local docker container"),
+		"DOCKER_IP":     "127.0.0.1",
 		"POST_USER":     readInput("Enter a username for the postgresql install"),
 		"POST_PASSWORD": readSecureInput("Enter a password for the postgresql install:"),
 		"PG_PORT":       readInput("Enter the port postgrsql should listen on"),
 		"DBNAME":        readInput("Enter a name for the new database"),
-		"SUBNET":        readInput("Enter the subnet for the docker network (e.g.,192.168.100.0/24)"),
 		"SSL_MODE":      "verify-full",
 	}
 
@@ -101,7 +99,7 @@ func SetEnv() {
 }
 
 // Determines what package manager to use
-func GetPackageManager() (string, error) {
+func getPackageManager() (string, error) {
 
 	file, err := os.Open("/etc/os-release")
 	if err != nil {
@@ -138,8 +136,108 @@ func GetPackageManager() (string, error) {
 	return "", fmt.Errorf("could not determine Linux distribution")
 }
 
+// LogError writes errors to the Install.log file
+func LogError(message string, err error) {
+	logFile, logErr := os.OpenFile("Install.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if logErr != nil {
+		fmt.Println("Error opening log file:", logErr)
+		return
+	}
+	defer logFile.Close()
+
+	logMessage := fmt.Sprintf("%s: %v\n", message, err)
+	logFile.WriteString(logMessage)
+	fmt.Println(message, err)
+}
+
+// LogInfo writes informational messages to the Install.log file
+func LogInfo(message string) {
+	logFile, logErr := os.OpenFile("Install.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if logErr != nil {
+		fmt.Println("Error opening log file:", logErr)
+		return
+	}
+	defer logFile.Close()
+
+	logFile.WriteString(message + "\n")
+	fmt.Println(message)
+}
+
+// verifyDockerInstallation checks if Docker is installed
+func verifyDockerInstallation() bool {
+	cmd := exec.Command("docker", "--version")
+	err := cmd.Run()
+	if err != nil {
+		LogError("Docker is not installed.", err)
+		return false
+	}
+	LogInfo("Docker is already installed.")
+	return true
+}
+
+// enableAndStartDocker enables and starts the Docker service
+func enableAndStartDocker() error {
+	cmd := "sudo systemctl enable docker && sudo systemctl restart docker"
+	err := exec.Command("bash", "-c", cmd).Run()
+	if err != nil {
+		LogError("Failed to enable and start Docker service.", err)
+		return err
+	}
+	LogInfo("Docker service started successfully.")
+	return nil
+}
+
+// verifyDockerComposeInstallation checks if Docker Compose is installed
+func verifyDockerComposeInstallation() error {
+	cmd := exec.Command("docker-compose", "--version")
+	err := cmd.Run()
+	if err != nil {
+		LogError("Docker Compose is not installed.", err)
+		installDockerCompose()
+	} else {
+		LogInfo("Docker Compose is already installed.")
+	}
+	return nil
+}
+
+// startDockerContainer starts the PostgreSQL container using docker-compose
+func startDockerContainer() error {
+	cmd := "sudo docker-compose -f docker/docker-compose.yml up -d"
+	err := exec.Command("bash", "-c", cmd).Run()
+	if err != nil {
+		LogError("Error starting Docker container.", err)
+		return err
+	}
+	LogInfo("PostgreSQL container started successfully.")
+	return nil
+}
+
+// UpdatePgHbaConf updates the pg_hba.conf file inside the container
+func UpdatePgHbaConf(containerName string) error {
+	updateCmd := `echo 'host all all 0.0.0.0/0 md5' >> /var/lib/postgresql/data/pg_hba.conf`
+	err := exec.Command("sudo", "docker", "exec", containerName, "bash", "-c", updateCmd).Run()
+	if err != nil {
+		LogError("Error updating pg_hba.conf.", err)
+		return err
+	}
+	LogInfo("pg_hba.conf updated successfully.")
+	return nil
+}
+
+// reloadPostgresConfiguration reloads the PostgreSQL configuration
+func reloadPostgresConfiguration(containerName string) error {
+	reloadCmd := exec.Command("sudo", "docker", "exec", containerName, "pg_ctl", "reload")
+	err := reloadCmd.Run()
+	if err != nil {
+		LogError("Error reloading PostgreSQL configuration.", err)
+		return err
+	}
+	LogInfo("PostgreSQL configuration reloaded successfully.")
+	return nil
+}
+
 // Verifys the package manager installs the docker requirement
-func InstallDocker() {
+func installDocker() { // Corrected function name
 	// Load the environment variables
 	godotenv.Load(".env")
 	fmt.Println("Installing docker requirement...")
@@ -150,25 +248,29 @@ func InstallDocker() {
 		return
 	}
 
-	//Switch to determine how we are installing postgres
+	// Switch to determine how we are installing Docker
 	var cmd *exec.Cmd
 	switch os {
 	case "apt":
-		cmd = exec.Command("sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "docker")
+		cmd = exec.Command("bash", "-c", "sudo apt update && sudo apt install -y docker")
 	case "dnf":
-		cmd = exec.Command("sudo", "dnf", "install", "docker", "-y")
+		cmd = exec.Command("sudo", "dnf", "install", "-y", "docker")
 	case "pacman":
 		cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "docker")
 	default:
 		fmt.Println("Unsupported package manager")
 		return
 	}
-	cmd.Run()
+
+	if err := cmd.Run(); err != nil {
+		fmt.Println("Error installing Docker:", err)
+		return
+	}
+	fmt.Println("Docker installed successfully.")
 }
 
 // Installs the openssl requirement
-func InstallOpenSSL() {
-
+func installOpenSSL() {
 	godotenv.Load(".env")
 	fmt.Println("Installing openssl requirement...")
 
@@ -183,8 +285,8 @@ func InstallOpenSSL() {
 
 	switch os {
 	case "apt":
-		cmd = exec.Command("sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "openssl")
-	case "yum":
+		cmd = exec.Command("bash", "-c", "sudo apt update && sudo apt install -y openssl")
+	case "dnf":
 		cmd = exec.Command("sudo", "dnf", "install", "-y", "openssl")
 	case "pacman":
 		cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "openssl")
@@ -193,16 +295,15 @@ func InstallOpenSSL() {
 		return
 	}
 
-	cmd.Run()
 	if err := cmd.Run(); err != nil {
-		fmt.Println("Error installing openssl...")
+		fmt.Println("Error installing OpenSSL:", err)
 		return
 	}
 	fmt.Println("OpenSSL installed successfully.")
 }
 
 // Verifys the os and installs the docker-compose requirement
-func InstallDockerCompose() {
+func installDockerCompose() {
 	fmt.Println("Installing docker-compose requirement...")
 
 	godotenv.Load(".env")
@@ -239,180 +340,74 @@ func InstallDockerCompose() {
 // configuration yaml is in place
 // If not, it builds them and starts the postgresql container
 func BuildContainers() {
-
 	godotenv.Load(".env")
 
-	// Helper function to verify docker is installed
-	docker := func() bool {
-		// Use os/exec to check if docker is installed
-		cmd := exec.Command("docker", "--version")
-		err := cmd.Run()
-		if err != nil {
-			return false
-		}
-		return true
+	if !verifyDockerInstallation() {
+		LogInfo("Installing Docker...")
+		installDocker() // Corrected function call
 	}
 
-	//Verify the installation of docker
-	// If docker is not installed, install it
-	for {
-		if !docker() {
-			fmt.Println("Docker is not installed. Installing Docker...")
-			InstallDocker()
-			break
+	if err := enableAndStartDocker(); err != nil {
+		return
+	}
+
+	if err := verifyDockerComposeInstallation(); err != nil {
+		return
+	}
+
+	LogInfo("Starting PostgreSQL container...")
+	if err := startDockerContainer(); err != nil {
+		return
+	}
+
+	time.Sleep(3 * time.Second) // Wait for the container to start, may need to be adjusted
+
+	// Check if the container is running
+	cmd := exec.Command("sudo", "docker", "ps", "-q", "--filter", "name=pgsql_db")
+	output, err := cmd.Output()
+	if err == nil && len(output) > 0 {
+		fmt.Println("PostgreSQL container is running.")
+		LogInfo("PostgreSQL container is running.")
+	} else if err == nil {
+		fmt.Println("Waiting for postgres container...")
+		time.Sleep(5 * time.Second)
+		output, err = cmd.Output()
+		if err == nil && len(output) > 0 {
+			fmt.Println("PostgreSQL container is running.")
+			LogInfo("PostgreSQL container is running.")
 		} else {
-			fmt.Println("Docker is already installed. Verifying installation...")
-			_, err := os.Stat(".docker/compose/.docker-compose.yml")
-			if os.IsNotExist(err) {
-				fmt.Println("No container configuration found. Creating new container configuration...")
-				//Create the docker configuration and mount directory
-				os.Mkdir(".docker", 0755)
-				os.Mkdir(".docker/compose", 0755)
-				os.MkdirAll(".docker/compose/mounts", 0755)
-				os.MkdirAll(".docker/compose/mounts/custom", 0755)
-
-				// Set the docker environment configuration
-				user := os.Getenv("POST_USER")
-				password := os.Getenv("POST_PASSWORD")
-				dbname := os.Getenv("DBNAME")
-				dockerip := os.Getenv("DOCKER_IP")
-				dbport := os.Getenv("PG_PORT")
-				subnet := os.Getenv("SUBNET")
-				conf := fmt.Sprintf("POST_USER=%s\nPOST_PASSWORD=%s\nDBNAME=%s\nPG_PORT=%s\nDOCKER_IP=%s\nSUBNET=%s\n", user, password, dbname, dbport, dockerip, subnet)
-
-				file, err := os.Create(".docker/compose/.env")
-				if err != nil {
-					return
-				}
-				defer file.Close()
-
-				//Write environment file
-				_, err = file.Write([]byte(conf))
-				if err != nil {
-					fmt.Println("Error writing to .env file:", err)
-					return
-				}
-
-				// Enable and start Docker service
-				cmd := "sudo systemctl enable docker && sudo systemctl restart docker"
-				err2 := exec.Command("bash", "-c", cmd).Run()
-				if err2 != nil {
-					fmt.Println("Docker is not running. Please start Docker and try again.")
-					return
-				}
-				fmt.Println("Docker started successfully.")
-
-				// Check if docker-compose is installed
-				cmd = "docker-compose --version"
-				err = exec.Command("bash", "-c", cmd).Run()
-				if err != nil {
-					fmt.Println("Docker Compose is not installed. Installing Docker Compose...")
-					InstallDockerCompose()
-				} else {
-					fmt.Println("Docker Compose is already installed.")
-				}
-
-				// Create the docker-compose.yml file
-				compose := `# THIS FILE IS AUTO-GENERATED
-#DO NOT EDIT THIS FILE
-#TO MAKE CHANGES, EDIT THE .env FILE
-services:
-  postgres:
-    image: postgres:16
-    container_name: postgres_container
-    environment:
-      POSTGRES_USER: ${POST_USER}
-      POSTGRES_PASSWORD: ${POST_PASSWORD}
-      POSTGRES_DB: ${DBNAME}
-    ports:
-      - "${PG_PORT}:5432"
-    networks:
-      custom_network:
-        ipv4_address: ${DOCKER_IP}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - .docker/compose/mounts:/var/lib/postgresql/custom
-    command:
-      - "postgres"
-      - "-c"
-      - "config_file=/var/lib/postgresql/data/postgresql.conf"
-      - "-c"
-      - "hba_file=/var/lib/postgresql/custom/pg_hba.conf"
-
-networks:
-  custom_network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: ${SUBNET}
-
-volumes:
-  postgres_data:
-`
-
-				// Create the directory if it doesn't exist
-				yamlFile, err := os.Create(".docker/compose/docker-compose.yml")
-				if err != nil {
-					fmt.Println("Error creating docker-compose.yml file:", err)
-					return
-				}
-				defer yamlFile.Close()
-
-				_, err = yamlFile.Write([]byte(compose))
-				if err != nil {
-					fmt.Println("Error writing to docker-compose.yml file:", err)
-					return
-				}
-
-				fmt.Println("Docker configuration file created successfully.")
-
-				// Start the Docker container using docker-compose
-				fmt.Println("Starting Postgres container...")
-				cmd2 := "sudo docker-compose -f .docker/compose/docker-compose.yml up -d"
-				err3 := exec.Command("bash", "-c", cmd2).Run()
-				if err3 != nil {
-					fmt.Println("Error starting Docker container:", err)
-					return
-				}
-				// Check if the container is running
-				cmd = "sudo docker ps"
-				err = exec.Command("bash", "-c", cmd).Run()
-				if err != nil {
-					fmt.Println("Error checking Docker container status:", err)
-					return
-				}
-
-				fmt.Println("Database container started successfully.")
-				break
-			} else {
-				fmt.Println("Docker container configuration already exists. Skipping configuration.")
-				break
-			}
+			fmt.Println("PostgreSQL container is not running.")
+			LogError("PostgreSQL container is not running.", err)
+			return
 		}
+	} else {
+		fmt.Println("Error checking PostgreSQL container status.")
+		LogError("Error checking PostgreSQL container status.", err)
+		return
 	}
+	containerName := "pgsql_db"
+	LogInfo("Updating pg_hba.conf inside the container...")
+	if err2 := UpdatePgHbaConf(containerName); err2 != nil {
+		return
+	}
+
+	LogInfo("Reloading PostgreSQL configuration...")
+	if err := reloadPostgresConfiguration(containerName); err != nil {
+		return
+	}
+
+	LogInfo("Database container setup completed successfully.")
 }
 
 func Setup() {
 
-	// Check if the .env file exists, if not, begin setup
-	// This will also check if the docker configuration exists
-	// If it does not exist, it will create the docker configuration
-	// If it does exist, it will skip the setup
-
 	if !CheckEnvFile() {
 		SetEnv()
+		installOpenSSL()
 		BuildContainers()
 	} else {
 		fmt.Println("Exising installation detected. Skipping initial configuration setup.")
-	}
 
-	fmt.Println("Checking for database connection...")
-	err := pgconnect.TestConnection()
-	if err != nil {
-		fmt.Println("Error connecting to the database:", err)
-		return
-	} else {
-		fmt.Println("Database connection successful.")
 	}
 
 }
